@@ -1,0 +1,30 @@
+testthat::test_that("native bulk packet transport preserves large text and binary", {
+  .rsqlclientnet_skip_no_sql()
+  cs <- Sys.getenv("RSQLCLIENTNET_TEST_CONNECTION_STRING")
+  con <- DBI::dbConnect(RSqlClientNET::SqlClientNET(), connection_string = cs)
+  on.exit(if (DBI::dbIsValid(con)) DBI::dbDisconnect(con), add = TRUE)
+  testthat::expect_true(DBI::dbIsValid(con))
+  value <- paste(rep("abcÆøå🌍", 1200L), collapse = "")
+  raw_value <- as.raw(rep(0:255, 48L))
+  d <- data.frame(i=1:4, value=c(value, NA_character_, "", value),
+                  stringsAsFactors=FALSE)
+  d$b <- I(list(raw_value, NULL, raw(0), raw_value))
+  old <- options(RSqlClientNET.bulk_profile=TRUE)
+  on.exit(options(old), add=TRUE)
+  msgs <- character()
+  withCallingHandlers({
+    testthat::expect_true(DBI::dbWriteTable(con, "#bulktransport26", d,
+      field.types=c(value="NVARCHAR(MAX)"), batch_rows=2L))
+  }, message = function(m) {
+    msgs <<- c(msgs, conditionMessage(m))
+    invokeRestart("muffleMessage")
+  })
+  testthat::expect_true(any(grepl("native packet .*native pipe send .*helper receive", msgs)))
+  ans <- DBI::dbGetQuery(con, "SELECT [i],[value],[b] FROM #bulktransport26 ORDER BY [i]")
+  testthat::expect_identical(ans$i, d$i)
+  testthat::expect_identical(ans$value, d$value)
+  testthat::expect_identical(as.integer(ans$b[[1]]), as.integer(raw_value))
+  testthat::expect_true(is.na(ans$value[2]))
+  testthat::expect_equal(length(ans$b[[3]]), 0L)
+  DBI::dbRemoveTable(con, "#bulktransport26")
+})

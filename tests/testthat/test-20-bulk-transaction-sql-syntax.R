@@ -1,0 +1,10 @@
+testthat::test_that("RC34a verification SQL separates alias from FROM", {
+  script <- file.path("tools", "benchmarks", "benchmark-bulk-transactions.R")
+  if (!file.exists(script)) script <- file.path("..", "..", script)
+  if (!file.exists(script)) testthat::skip("source benchmark unavailable")
+  env <- new.env(parent=globalenv())
+  sys.source(script, envir=env)
+  sql <- env$.rscn34_verify_sql("[dbo].[rscn_sql_syntax_test]")
+  testthat::expect_match(sql, "AS bytes FROM [dbo].[rscn_sql_syntax_test]", fixed=TRUE)
+  testthat::expect_false(grepl("bytesFROM", sql, fixed=TRUE))
+})

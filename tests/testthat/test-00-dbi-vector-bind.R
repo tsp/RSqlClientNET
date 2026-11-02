@@ -1,0 +1,77 @@
+testthat::test_that("DBI binding splits equal-length typed parameter vectors", {
+  split <- getFromNamespace(".dbi_param_sets", "RSqlClientNET")
+  rows <- split(list(id=1:3, txt=c("NA", NA_character_, ""),
+                     time=as.Date(c("2024-01-01", NA, "2024-01-03"))))
+  testthat::expect_length(rows, 3L)
+  testthat::expect_identical(vapply(rows, function(r) r$id,integer(1)),1:3)
+  testthat::expect_identical(rows[[1L]]$txt,"NA")
+  testthat::expect_true(is.na(rows[[2L]]$txt))
+  testthat::expect_identical(rows[[3L]]$txt,"")
+  testthat::expect_s3_class(rows[[1L]]$time,"Date")
+  testthat::expect_identical(length(split(list(id=integer()))),0L)
+  testthat::expect_error(split(list(a=1:2,b=1:3)),"equal lengths")
+  testthat::expect_error(split(list(a=1L,a=2L)),"unique nonempty names")
+  testthat::expect_length(split(list()),1L)
+})
+
+testthat::test_that("DBI binding preserves binary NULL and integer64", {
+  split <- getFromNamespace(".dbi_param_sets", "RSqlClientNET")
+  x <- bit64::as.integer64(c("9223372036854775807",NA))
+  rows <- split(list(id=x,blob=list(as.raw(c(0,255)),NULL)))
+  testthat::expect_true(inherits(rows[[1L]]$id,"integer64"))
+  testthat::expect_identical(as.character(rows[[1L]]$id),"9223372036854775807")
+  testthat::expect_true(is.na(rows[[2L]]$id))
+  testthat::expect_identical(rows[[1L]]$blob,as.raw(c(0,255)))
+  testthat::expect_true("blob" %in% names(rows[[2L]]))
+  testthat::expect_null(rows[[2L]]$blob)
+  testthat::expect_identical(as.integer(getFromNamespace(".dbi_n", "RSqlClientNET")(NA_real_)), -1L)
+})
+
+
+testthat::test_that("DBI accepts named atomic vectors without losing S3 classes", {
+  split <- getFromNamespace(".dbi_param_sets", "RSqlClientNET")
+  rows <- split(c(a=1L, b=2L))
+  expect_length(rows, 1L)
+  expect_identical(rows[[1L]], list(a=1L,b=2L))
+  dates <- as.Date(c("2023-12-17","2023-12-18"))
+  names(dates) <- c("a","b")
+  row <- split(dates)[[1L]]
+  expect_s3_class(row$a,"Date")
+  expect_identical(as.character(row$b),"2023-12-18")
+  times <- as.POSIXct(c("2023-12-17 02:40:49","2023-12-17 02:40:50"), tz="UTC")
+  names(times) <- c("a","b")
+  expect_s3_class(split(times)[[1L]]$a,"POSIXct")
+  dur <- as.difftime(c(1,2),units="hours")
+  names(dur) <- c("a","b")
+  expect_s3_class(split(dur)[[1L]]$a,"difftime")
+  expect_error(split(c(1L,2L)), "unique nonempty names")
+})
+
+testthat::test_that("DBI factor parameters warn and preserve labels", {
+  split <- getFromNamespace(".dbi_param_sets", "RSqlClientNET")
+  x <- factor(c("apple", "pear"))
+  names(x) <- c("a","b")
+  expect_warning(rows <- split(x), "Factor")
+  expect_identical(rows[[1L]],list(a="apple",b="pear"))
+})
+
+testthat::test_that("DBI POSIXlt and binary blobs become scalar typed SQL parameters", {
+  split <- getFromNamespace(".dbi_param_sets", "RSqlClientNET")
+  encode <- getFromNamespace(".sql_encode_params", "RSqlClientNET")
+  times <- list(a=as.POSIXlt(as.POSIXct("2023-12-17 02:40:49",tz="UTC")))
+  row <- split(times)[[1L]]
+  expect_s3_class(row$a,"POSIXct")
+  typed <- encode(row)
+  expect_identical(typed$a$`$sqlclient_type`,"datetime2")
+  expect_match(typed$a$value,"2023-12-17T02:40:49")
+  expect_null(encode(list(a=as.POSIXct(NA, tz="UTC")))$a$value)
+  expect_null(encode(list(a=as.Date(NA)))$a$value)
+  blobrow <- split(list(a=list(as.raw(c(0,255))), b=list(raw(0)),c=list(NULL)))[[1L]]
+  result <- encode(blobrow)
+  expect_identical(result$a$`$sqlclient_type`,"varbinary")
+  expect_identical(result$b$`$sqlclient_type`,"varbinary")
+  expect_null(result$c)
+  timesql <- encode(split(list(a=as.difftime(1,units="hours")))[[1L]])
+  expect_identical(timesql$a$`$sqlclient_type`,"time")
+  expect_identical(timesql$a$value,"01:00:00.000000")
+})

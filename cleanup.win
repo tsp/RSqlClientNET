@@ -1,0 +1,5 @@
+#!/bin/sh
+# Nothing to remove from the source tree. The helper is built in a private
+# temporary directory and installed directly into R_PACKAGE_DIR.
+# Do not delete inst/dotnet/publish: other processes may hold locks on it.
+exit 0

@@ -1,0 +1,21 @@
+testthat::test_that("SQL Server accepts DBI named atomic and POSIXlt parameter bindings", {
+  cs <- Sys.getenv("RSQLCLIENTNET_TEST_CONNECTION_STRING", "")
+  testthat::skip_if(!nzchar(cs), "RSQLCLIENTNET_TEST_CONNECTION_STRING not set")
+  con <- DBI::dbConnect(RSqlClientNET::SqlClientNET(),connection_string=cs,tz="UTC")
+  on.exit(if (DBI::dbIsValid(con)) DBI::dbDisconnect(con),add=TRUE)
+  res <- DBI::dbSendQuery(con,"SELECT CASE WHEN @a=12 AND @b=13 THEN 1 ELSE 0 END AS ok")
+  DBI::dbBind(res,c(a=12L,b=13L))
+  expect_identical(DBI::dbFetch(res)$ok,1L)
+  DBI::dbClearResult(res)
+
+  res <- DBI::dbSendQuery(con,"SELECT CASE WHEN @a=CAST('2023-12-17T02:40:49' AS datetime2) THEN 1 ELSE 0 END AS ok")
+  x <- as.POSIXlt(as.POSIXct("2023-12-17 02:40:49",tz="UTC"))
+  DBI::dbBind(res,list(a=x))
+  expect_identical(DBI::dbFetch(res)$ok,1L)
+  DBI::dbClearResult(res)
+
+  res <- DBI::dbSendQuery(con,"SELECT CASE WHEN @a=0x00FF AND @b=0x AND @c IS NULL THEN 1 ELSE 0 END AS ok")
+  DBI::dbBind(res,list(a=list(as.raw(c(0,255))),b=list(raw(0)),c=list(NULL)))
+  expect_identical(DBI::dbFetch(res)$ok,1L)
+  DBI::dbClearResult(res)
+})

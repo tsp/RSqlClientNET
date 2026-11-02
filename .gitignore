@@ -1,0 +1,57 @@
+# R session/user and IDE files
+.Rhistory
+.RData
+.Ruserdata
+.Rproj.user/
+.Renviron
+.Rprofile
+.env
+.env.*
+!.env.example
+
+# Built R packages and check artifacts
+*.Rcheck/
+.Rcheck/
+*.tar.gz
+*.zip
+*.tgz
+*.o
+*.obj
+*.dll
+*.so
+*.a
+*.rdb
+*.rdx
+src/*.d
+src/*.def
+src/*.dll
+src/*.o
+src/*.so
+
+# .NET generated artifacts, caches and debug outputs
+**/bin/
+**/obj/
+inst/dotnet/publish/
+**/*.pdb
+
+# Local developer outputs and credentials
+.DS_Store
+Thumbs.db
+*.log
+local-config.*
+*secrets*.json
+benchmarks-results/
+
+# OS-specific local connection profiles and test output
+*.Renviron
+.Renviron*
+**/*.user
+*.suo
+*.pfx
+*.p12
+*.key
+*.pem
+*.publishsettings
+
+# Local benchmark checkpoints / summaries
+tools/benchmarks/benchmark_results/

@@ -1,0 +1,109 @@
+name: Build Windows binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing Git tag to attach this verified binary to (leave blank for build artifact only)'
+        required: false
+        type: string
+      license_reviewed:
+        description: 'I have reviewed binary NuGet licenses and required redistributable notices for this release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  binary:
+    runs-on: windows-latest
+    env:
+      RSQLCLIENTNET_AUTO_INSTALL_DEPS: '0'
+      DOTNET_EnableDiagnostics_IPC: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: '4.6.1'
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            any::pkgbuild
+            any::callr
+            any::roxygen2
+            any::pak
+          needs: check
+      - name: Build and verify installable Windows R package
+        shell: Rscript {0}
+        run: |
+          source('tools/build-binary.R')
+      - name: Collect Windows ZIP and dependency list
+        id: asset
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem '..' -Filter 'RSqlClientNET_0.1.0.zip' -File | Select-Object -First 1
+          if (-not $zip) { throw 'Windows binary ZIP missing' }
+          New-Item -ItemType Directory -Force release-artifacts | Out-Null
+          Copy-Item $zip.FullName 'release-artifacts/RSqlClientNET_0.1.0.zip'
+          # License metadata inventory for review; not itself legal clearance.
+          $temp = Join-Path $env:RUNNER_TEMP 'rsqlclientnet-license-audit'
+          New-Item -ItemType Directory -Force $temp | Out-Null
+          Expand-Archive 'release-artifacts/RSqlClientNET_0.1.0.zip' -DestinationPath $temp -Force
+          $publish = Join-Path $temp 'RSqlClientNET/dotnet/publish'
+          $depsFile = Join-Path $publish 'SqlClientBridge.deps.json'
+          if (-not (Test-Path $depsFile)) { throw 'Missing dependency manifest in Windows binary' }
+          $deps = Get-Content $depsFile -Raw | ConvertFrom-Json -AsHashtable
+          $lines = @("NuGet package`tVersion`tDeclared license`tLicense URL`tNuSpec available")
+          foreach ($key in @($deps.libraries.Keys | Sort-Object)) {
+            if ($deps.libraries[$key].type -ne 'package') { continue }
+            $parts = $key -split '/'
+            $id = $parts[0]; $version = $parts[1]
+            $nuspec = Join-Path $HOME ".nuget/packages/$($id.ToLowerInvariant())/$version/$($id.ToLowerInvariant()).nuspec"
+            $license = 'UNKNOWN'; $url = ''; $available = 'no'
+            if (Test-Path $nuspec) {
+              $available = 'yes'
+              [xml]$meta = Get-Content $nuspec -Raw
+              if ($meta.package.metadata.license) {
+                $license = [string]$meta.package.metadata.license.'#text'
+                if (-not $license) { $license = [string]$meta.package.metadata.license.InnerText }
+              }
+              $url = [string]$meta.package.metadata.licenseUrl
+            }
+            $lines += "$id`t$version`t$license`t$url`t$available"
+          }
+          $lines | Set-Content 'release-artifacts/NuGet-license-inventory.tsv' -Encoding utf8
+          Get-ChildItem $publish -File | Select-Object Name,Length | Format-Table | Out-String |
+            Set-Content 'release-artifacts/dotnet-published-files.txt' -Encoding utf8
+          Write-Host "Windows package: $($zip.Name)"
+          Get-Content 'release-artifacts/NuGet-license-inventory.tsv'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RSqlClientNET_0.1.0_Windows_R-4.6_x64
+          path: release-artifacts/*
+          if-no-files-found: error
+      - name: Attach binary to existing Git tag / GitHub Release (opt-in)
+        if: ${{ inputs.release_tag != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          if ('${{ inputs.license_reviewed }}' -ne 'true') { throw 'Public release requires confirmed dependency-license review (see docs/THIRD_PARTY.md)' }
+          git fetch --tags --force
+          git rev-parse "refs/tags/$env:TAG" | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "Tag $env:TAG does not exist in checked-out repository" }
+          gh release view "$env:TAG" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$env:TAG" --verify-tag --title "RSqlClientNET $env:TAG" --notes "RSqlClientNET $env:TAG Windows R 4.6.x binary. AI-assisted/vibe-coded with GPT-6 SOL – high. See README, docs/THIRD_PARTY.md and release checks."
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to create GitHub Release' }
+          }
+          gh release upload "$env:TAG" 'release-artifacts/RSqlClientNET_0.1.0.zip' 'release-artifacts/NuGet-license-inventory.tsv' 'release-artifacts/dotnet-published-files.txt' --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to attach verified binary to GitHub Release' }

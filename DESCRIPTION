@@ -1,0 +1,55 @@
+Package: RSqlClientNET
+Title: SQL Server DBI Backend Using 'Microsoft.Data.SqlClient'
+Version: 0.1.0
+Authors@R: person("Tonny Studsgaard", "Petersen", email = "tsp@person.dk", role = c("aut", "cre", "cph"))
+Description: Provides a 'DBI' backend for Microsoft SQL Server via a
+    persistent '.NET' helper running 'Microsoft.Data.SqlClient' and a native
+    'Rcpp' binary transport. Supports parameterized queries, paged result
+    fetching, transactions, metadata, temporary tables, and high-throughput
+    'SqlBulkCopy' table uploads. Provides configurable conversion of SQL
+    decimal, 64-bit integer, binary, and timestamp values, including optional
+    disambiguation of repeated local times at daylight-saving transitions.
+    Developed through AI-assisted (vibe-coded) programming with GPT-6 SOL
+    (high thinking effort), with human testing and maintenance by Tonny
+    Studsgaard Petersen.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends: R (>= 4.1.0)
+Imports:
+    data.table,
+    jsonlite,
+    processx,
+    Rcpp,
+    bit64,
+    lubridate,
+    DBI,
+    methods
+Suggests:
+    dbplyr (>= 2.6.0),
+    dplyr,
+    testthat (>= 3.0.0),
+    withr,
+    DBItest,
+    blob,
+    nycflights13,
+    odbc,
+    knitr,
+    rmarkdown,
+    roxygen2 (>= 7.3.0)
+VignetteBuilder: knitr
+Config/testthat/edition: 3
+Collate:
+    'sqlclient.R'
+    'datetime-binary.R'
+    'edge-report.R'
+    'dbi.R'
+    'dbi-write.R'
+    'dbplyr.R'
+    'zzz-documentation.R'
+LinkingTo: Rcpp
+SystemRequirements: .NET runtime 8 or later (helper targets net8.0 with
+    RollForward=LatestMajor); C++17 compiler and .NET SDK 8 or later
+    for installation from source
+URL: https://github.com/tsp/RSqlClientNET
+BugReports: https://github.com/tsp/RSqlClientNET/issues
+Config/roxygen2/version: 8.1.1

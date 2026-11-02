@@ -1,0 +1,261 @@
+---
+title: "SQL Server benchmarks: RSqlClientNET, odbc and RODBC"
+author: "Tonny Studsgaard Petersen"
+output:
+  rmarkdown::html_vignette:
+    toc: true
+vignette: >
+  %\VignetteIndexEntry{SQL Server benchmarks: RSqlClientNET, odbc and RODBC}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>")
+
+# This vignette never connects to a database during package checks or builds.
+# Enter benchmark measurements in vignettes/benchmark-results.csv, or run
+# tools/benchmarks/flights-vignette-benchmark.R to generate that file.
+drivers <- c("RSqlClientNET", "odbc", "RODBCDBI", "RODBC")
+template <- expand.grid(driver = drivers, operation = c("write", "read"),
+                        stringsAsFactors = FALSE)
+template$seconds <- NA_real_
+template$n_rows <- NA_integer_
+template$repetitions <- NA_integer_
+results_file <- "benchmark-results.csv"
+results <- if (file.exists(results_file)) {
+  read.csv(results_file, na.strings = c("", "NA"), stringsAsFactors = FALSE)
+} else {
+  template
+}
+stopifnot(all(c("driver", "operation", "seconds", "n_rows") %in% names(results)))
+results$seconds <- suppressWarnings(as.numeric(results$seconds))
+results$n_rows <- suppressWarnings(as.numeric(results$n_rows))
+
+show_results <- function(operation) {
+  x <- results[results$operation == operation, , drop = FALSE]
+  x <- x[!duplicated(x$driver), , drop = FALSE]
+  x <- x[match(drivers, x$driver), , drop = FALSE]
+  baseline <- x$seconds[match("odbc", x$driver)]
+  # Compute ratios only when both times were actually measured and positive.
+  speedup <- rep(NA_real_, nrow(x))
+  if (length(baseline) == 1L && is.finite(baseline) && baseline > 0) {
+    valid <- is.finite(x$seconds) & x$seconds > 0
+    speedup[valid] <- baseline / x$seconds[valid]
+  }
+  format_s <- function(z) ifelse(is.finite(z), sprintf("%.3f", z), "—")
+  data <- data.frame(
+    Driver = drivers,
+    `Elapsed (s)` = format_s(x$seconds),
+    `Rows` = ifelse(is.finite(x$n_rows), format(x$n_rows, big.mark = ",", trim = TRUE), "—"),
+    `Speed vs. odbc` = ifelse(is.finite(speedup) & speedup > 0,
+                             sprintf("%.2f×", speedup), "—"),
+    check.names = FALSE
+  )
+  # Explicit HTML output avoids Markdown being collapsed into one paragraph.
+  knitr::kable(
+    data,
+    format = "html",
+    align = c("l", "r", "r", "r"),
+    caption = if (operation == "write") "Writing to SQL Server" else "Reading from SQL Server",
+    table.attr = 'class="rscn-benchmark-table"',
+    escape = TRUE
+  )
+}
+```
+
+<style>
+table.rscn-benchmark-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0 1.5em;
+}
+table.rscn-benchmark-table th,
+table.rscn-benchmark-table td {
+  padding: 0.5em 0.8em;
+}
+table.rscn-benchmark-table thead th {
+  border-bottom: 2px solid #cbd5df;
+}
+table.rscn-benchmark-table tbody tr:nth-child(even) {
+  background-color: #f5f7fa;
+}
+table.rscn-benchmark-table caption {
+  text-align: left;
+  font-weight: bold;
+  margin-bottom: 0.5em;
+}
+</style>
+
+## Overview
+
+This vignette compares reading and writing **Microsoft SQL Server** tables using
+[RSqlClientNET](https://github.com/tsp/RSqlClientNET),
+[odbc](https://odbc.r-dbi.org/articles/benchmarks.html), `RODBCDBI`, and `RODBC`.
+Its structure is inspired by the [odbc benchmarks vignette](https://odbc.r-dbi.org/articles/benchmarks.html),
+but these are *new* measurements, not the historical timings from that page.
+
+The tables below display the values from `benchmark-results.csv`. Until you
+run the comparison, unmeasured values are shown as dashes rather than
+invented timings. You may edit the CSV directly or generate it with the
+accompanying script. The vignette can be built without a SQL Server or
+credentials.
+
+The comparison measures elapsed wall-clock time, not just CPU time. Drivers
+must connect to the *same* SQL Server instance and database, from the *same*
+client machine. Connection setup, test-data generation, row-count verification,
+and cleanup are **excluded** from the timed sections.
+
+## Setup
+
+To remain comparable with the original `odbc` vignette, we use
+`nycflights13::flights`, converted from tibble to `data.frame`, and omit the
+`time_hour` column. The data contain `r if (requireNamespace("nycflights13", quietly = TRUE)) format(nrow(nycflights13::flights), big.mark = ",") else "336,776"`
+rows and 18 columns after removal of that timestamp column.
+
+```{r data-preparation, eval=FALSE}
+flights <- as.data.frame(nycflights13::flights)
+flights$time_hour <- NULL
+stopifnot(ncol(flights) == 18L)
+```
+
+The runner connects to SQL Server with the existing RSqlClientNET connection
+string and an ODBC DSN. The examples below use Windows Authentication and the
+`SqlClientRTest` DSN; no username or password is stored in the repository.
+All drivers must reach the same SQL Server instance and database.
+`RODBC` and `RODBCDBI` are optional because their older interfaces have
+different capabilities and setup requirements.
+
+```{r connect-example, eval=FALSE}
+library(DBI)
+
+con_sqlclient <- DBI::dbConnect(
+  RSqlClientNET::SqlClientNET(),
+  connection_string = Sys.getenv("RSQLCLIENTNET_TEST_CONNECTION_STRING"),
+  data_table = FALSE   # DBI-compatible data.frame result
+)
+
+con_odbc <- DBI::dbConnect(
+  odbc::odbc(),
+  dsn = Sys.getenv("RSQLCLIENTNET_BENCH_DSN", unset = "SqlClientRTest")
+)
+
+# Disconnect when finished:
+DBI::dbDisconnect(con_sqlclient)
+DBI::dbDisconnect(con_odbc)
+```
+
+## Writing
+
+Each driver uploads the *same* `flights` data to a new, driver-specific table.
+The write timer includes table creation and data upload, using `dbWriteTable()`
+for the DBI drivers and `RODBC::sqlSave()` for RODBC. The table is checked and
+deleted after the timer has stopped. Repetitions run in randomized order to
+reduce systematic warm-up effects. A single manually timed write would look
+like this (the accompanying runner repeats and verifies it automatically):
+
+```{r write-example, eval=FALSE}
+write_time <- system.time(
+  DBI::dbWriteTable(con_sqlclient, "rscn_bench_write", flights,
+                    row.names = FALSE)
+)[["elapsed"]]
+DBI::dbRemoveTable(con_sqlclient, "rscn_bench_write")
+```
+
+```{r writing-results, echo=FALSE, results='asis'}
+cat(paste(as.character(show_results("write")), collapse = "\n"), "\n\n", sep = "")
+```
+
+## Reading
+
+A single common `flights` table is populated with RSqlClientNET *before*
+measurement. Each backend reads that same table using `dbReadTable()` or
+`RODBC::sqlFetch()`. The elapsed time includes fetching and materializing an
+R result, but not preparing the SQL table. Each result is checked for the
+expected number of rows and columns.
+
+```{r read-example, eval=FALSE}
+# Set up a common table once, before timing any reads:
+DBI::dbWriteTable(con_sqlclient, "rscn_bench_read", flights,
+                  row.names = FALSE)
+read_time <- system.time(
+  result <- DBI::dbReadTable(con_odbc, "rscn_bench_read")
+)[["elapsed"]]
+stopifnot(nrow(result) == nrow(flights))
+DBI::dbRemoveTable(con_sqlclient, "rscn_bench_read")
+```
+
+```{r reading-results, echo=FALSE, results='asis'}
+cat(paste(as.character(show_results("read")), collapse = "\n"), "\n\n", sep = "")
+```
+
+`Speed vs. odbc` is computed as `odbc elapsed / driver elapsed`; values above
+1.00× indicate faster execution than `odbc` *for that operation and setup*.
+Blank values mean no result has been entered. The comparison does not imply
+that one driver will be faster across all SQL types or workloads.
+
+## Enter your results
+
+Edit `vignettes/benchmark-results.csv` and replace the empty `seconds` values
+with your measured median elapsed times. Fill in `n_rows` and `repetitions` if
+available. Do not enter numbers from the historical odbc webpage, since they
+were measured on a different system and with different software versions.
+
+Alternatively, from the project root run:
+
+```{r run-example, eval=FALSE}
+# `con_str` is your existing trusted Windows Authentication connection string.
+Sys.setenv(
+  RSQLCLIENTNET_TEST_CONNECTION_STRING = con_str,
+  RSQLCLIENTNET_BENCH_DSN = "SqlClientRTest",
+  RSQLCLIENTNET_BENCH_EXTRA_DRIVERS = "RODBCDBI,RODBC",
+  RSQLCLIENTNET_VIGNETTE_REPEATS = 5
+)
+# Clear optional connection-string overrides so the runner uses the DSN.
+Sys.unsetenv(c("ODBC_CONNECTION_STRING", "RSQLCLIENTNET_BENCH_ODBC_CONNECTION_STRING"))
+source("tools/benchmarks/flights-vignette-benchmark.R")
+result <- run_flights_vignette_benchmark()
+
+# Rebuild the HTML vignette after collecting results:
+rmarkdown::render("vignettes/benchmarks.Rmd", quiet = TRUE)
+```
+
+The runner defaults to three repetitions and compares RSqlClientNET and
+`odbc`; the example above requests five repetitions and includes the optional
+`RODBC` / `RODBCDBI` drivers using the same DSN.
+It overwrites the CSV template with the newly measured medians, and prints
+all attempts in the console. To inspect variability, increase the repetition
+count or retain the per-attempt CSV written alongside the medians.
+
+## Interpretation and reproducibility
+
+Benchmarks are highly sensitive to operating system, R version, driver
+version, network latency, SQL Server configuration, SQL table types, and
+caching. Report these alongside the timings. In particular:
+
+- RSqlClientNET uses its default native **columnar** read transport and
+  default read batch size (32,768 rows in v0.1.0).
+- All DBI drivers return an ordinary `data.frame` for this benchmark;
+  RSqlClientNET's optional `data_table = TRUE` is **not** enabled.
+- The timestamp column is excluded to match the published odbc vignette.
+  For performance involving SQL Server `datetime` / `datetime2` and timezones,
+  use the separate `tools/benchmarks/datetime-local-binary.R` benchmark.
+- These operations use SQL Server tables, not R-only serialization or local
+  synthetic data frames; connection establishment and test data setup are
+  outside the timers.
+- `RODBC` and `RODBCDBI` have older APIs and may be unavailable or reject
+  particular data types. Missing measurements should remain blank rather than
+  being treated as zero.
+
+**Source and methodology:** [odbc benchmarks](https://odbc.r-dbi.org/articles/benchmarks.html).
+This vignette is maintained as part of RSqlClientNET; it does not incorporate
+timing claims from that earlier benchmark.
+
+
+## Bulk insert, TableLock and SQL Server transaction logging
+
+`dbWriteTable()` and `dbAppendTable()` support an explicit `table_lock = TRUE` argument, which maps to `SqlBulkCopyOptions.TableLock` for that operation only (`FALSE` by default). Locking can reduce performance in concurrent systems, so it is intentionally opt-in. SQL Server can use **minimal logging** for eligible bulk operations under SIMPLE/BULK_LOGGED recovery, subject to table/index structure and additional engine conditions. Do not assume this applies to indexed tables or databases using FULL recovery.
+
+In an October 2026 developer test (SQL Server 2025 Express, SIMPLE, empty disposable VARCHAR(MAX) heap), the median elapsed time for 50,000 values was 9.33 s with `table_lock = FALSE`, 5.61 s with `table_lock = TRUE`, and 13.45 s for standard `odbc` append (five repeats). Logically generated transaction log bytes were about 140 MB and 5.38 MB respectively for the RSqlClientNET alternatives. These measurements are workload-specific and should not be generalized to production.
+
+For reproducible comparisons of SQL transaction behavior, use `tools/benchmarks/benchmark-bulk-transactions.R`. The `result$logical_log` values come from **separately** instrumented writes with an explicit DBI transaction, read before commit. Physical file I/O is database-wide rather than per-transaction; sums of wait times may include parallel workers. `tools/benchmarks/benchmark-create-vs-append.R` independently compares creation and append workflows, including a precreated indexed table. Tests must run only on disposable databases.

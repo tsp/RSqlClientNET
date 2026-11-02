@@ -1,0 +1,18 @@
+library(RSqlClientNET)
+old <- getOption("RSqlClientNET.result_format", NULL)
+tryCatch({
+  options(RSqlClientNET.result_format = NULL)
+  stopifnot(identical(sql_default_format(), "columnar"))
+  implicit <- sql_types_test(precision="native", tz="UTC")
+  stopifnot(identical(sql_timings(implicit)$result_format, "columnar"))
+  sql_default_format("columnar")
+  stopifnot(identical(sql_default_format(), "columnar"))
+  x <- sql_types_test(precision="native", tz="UTC")
+  stopifnot(identical(sql_timings(x)$result_format, "columnar"))
+  # A removed legacy transport must fail rather than silently falling back.
+  err <- tryCatch(sql_types_test(transport="base64"), error=conditionMessage)
+  stopifnot(is.character(err), grepl("Only the native Rcpp",err,fixed=TRUE))
+  sql_default_format("csv")
+  stopifnot(identical(sql_timings(sql_types_test())$result_format,"csv"))
+}, finally=options(RSqlClientNET.result_format=old))
+message("PASS: user preference and rejection of obsolete Base64 transport")

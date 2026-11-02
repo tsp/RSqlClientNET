@@ -1,0 +1,14 @@
+^examples$
+^LICENSE\.md$
+^inst/dotnet/(publish|obj|bin)(/|$)
+^\.github$
+^\.gitignore$
+^\.Rproj\.user$
+^\.Rhistory$
+^\.RData$
+^\.Renviron$
+^\.Rprofile$
+^.*\.Rcheck$
+^\.gitattributes$
+^docs$
+^tools/benchmarks/benchmark_results$

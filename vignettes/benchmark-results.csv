@@ -1,0 +1,9 @@
+"driver","operation","seconds","n_rows","repetitions"
+"RSqlClientNET","write",3,336776,5
+"odbc","write",4.06999999999971,336776,5
+"RODBCDBI","write",69.5300000000002,336776,5
+"RODBC","write",70.1699999999996,336776,5
+"RSqlClientNET","read",0.75,336776,5
+"odbc","read",1.22000000000025,336776,5
+"RODBCDBI","read",1.27000000000044,336776,5
+"RODBC","read",1.27999999999975,336776,5

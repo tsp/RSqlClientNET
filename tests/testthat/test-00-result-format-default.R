@@ -1,0 +1,13 @@
+test_that("direct API prefers columnar unless explicitly changed", {
+  old <- getOption("RSqlClientNET.result_format", NULL)
+  on.exit(options(RSqlClientNET.result_format = old), add = TRUE)
+  options(RSqlClientNET.result_format = NULL)
+  expect_identical(RSqlClientNET::sql_default_format(), "columnar")
+  resolver <- getFromNamespace(".sql_result_format", "RSqlClientNET")
+  expect_identical(resolver(NULL, "rcpp"), "columnar")
+  expect_identical(resolver("csv", "rcpp"), "csv")
+  expect_identical(RSqlClientNET::sql_default_format("csv"), "columnar")
+  expect_identical(resolver(NULL, "rcpp"), "csv")
+  expect_identical(RSqlClientNET::sql_default_format("columnar"), "csv")
+  expect_identical(resolver(NULL, "rcpp"), "columnar")
+})

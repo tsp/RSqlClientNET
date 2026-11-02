@@ -1,0 +1,8 @@
+# Normalize line endings only; executable bits come from ZIP/Git file modes,
+# not from .gitattributes. The POSIX configure/cleanup entries must be 100755.
+* text=auto
+*.sh text eol=lf
+configure text eol=lf
+configure.win text eol=lf
+cleanup text eol=lf
+cleanup.win text eol=lf
